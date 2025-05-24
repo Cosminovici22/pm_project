@@ -121,7 +121,7 @@ void app_main(void)
 		hd44780_puts(&hd44780, buf);
 
 		hd44780_gotoxy(&hd44780, 0, 3);
-		snprintf(buf, sizeof buf, "    p: %.1f Pa", pressure);
+		snprintf(buf, sizeof buf, "    p: %.1f mb", pressure);
 		hd44780_puts(&hd44780, buf);
 
 		vTaskDelay(pdMS_TO_TICKS(60000));
