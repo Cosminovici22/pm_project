@@ -139,10 +139,6 @@ static esp_err_t http_get_handler(httpd_req_t *req)
 	char buf[1024];
 	float aqi;
 
-	for (int i = 0; i < featurec; i++)
-		printf("%f ", features[i]);
-	printf("\n");
-
 	signal.total_length = featurec;
 	signal.get_data = &get_feature_data;
 	if (run_classifier(&signal, &result, false) != EI_IMPULSE_OK)
@@ -293,7 +289,6 @@ extern "C" void app_main(void)
 	pms5003_t pms5003;
 	hd44780_t hd44780;
    	httpd_handle_t server;
-	float features[24];
 
 	ESP_ERROR_CHECK(setup_wifi());
 	ESP_ERROR_CHECK(setup_http_server(&server));
@@ -323,7 +318,6 @@ extern "C" void app_main(void)
 				memmove(features, features + 1, --featurec);
 
 			features[featurec++] = aqi_from(&data);
-			printf("%f\n", features[featurec - 1]);
 		}
 
 		hd44780_clear(&hd44780);
