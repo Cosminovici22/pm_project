@@ -1,6 +1,10 @@
 #ifndef _PMS5003_H_
 #define _PMS5003_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "driver/gpio.h"
 #include "driver/uart.h"
 
@@ -21,5 +25,9 @@ typedef struct pms5003_data pms5003_data_t;
 esp_err_t pms5003_init(pms5003_t *sens);
 esp_err_t pms5003_destroy(pms5003_t *sens);
 esp_err_t pms5003_read_data(pms5003_t *sens, pms5003_data_t *data);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

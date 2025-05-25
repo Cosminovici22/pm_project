@@ -11,10 +11,10 @@ esp_err_t setup_bme280(bme280_handle_t *bme280)
 	i2c_config_t i2c_config = {
 		.mode = I2C_MODE_MASTER,
 		.sda_io_num = GPIO_NUM_21,
-		.sda_pullup_en = GPIO_PULLUP_ENABLE,
 		.scl_io_num = GPIO_NUM_22,
+		.sda_pullup_en = GPIO_PULLUP_ENABLE,
 		.scl_pullup_en = GPIO_PULLUP_ENABLE,
-		.master.clk_speed = 100000,
+		.master = { .clk_speed = 100000 },
 	};
 
 	i2c_bus = i2c_bus_create(I2C_NUM_0, &i2c_config);
@@ -82,7 +82,7 @@ esp_err_t hd44780_lcd_init(hd44780_t *hd44780)
 	return ESP_OK;
 }
 
-void app_main(void)
+extern "C" void app_main(void)
 {
 	bme280_handle_t bme280;
 	pms5003_t pms5003;
