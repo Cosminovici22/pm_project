@@ -60,9 +60,9 @@ esp_err_t pms5003_read_data(pms5003_t *sens, pms5003_data_t *data)
 		return ESP_FAIL;
 
 	/* Change endianness */
-	data->pm1_0 = (buf[4] << 8) + buf[5];
-	data->pm2_5 = (buf[6] << 8) + buf[7];
-	data->pm10 = (buf[8] << 8) + buf[9];
+	data->pm1_0 = (buf[10] << 8) + buf[11];
+	data->pm2_5 = (buf[12] << 8) + buf[13];
+	data->pm10 = (buf[14] << 8) + buf[15];
 
 	return ESP_OK;
 }
