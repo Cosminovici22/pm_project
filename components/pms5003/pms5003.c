@@ -39,6 +39,7 @@ esp_err_t pms5003_read_data(pms5003_t *sens, pms5003_data_t *data)
 	uint16_t checksum;
 	int bytec;
 
+	/* Buffer fills up over time so reads fail, so flush it before read */
 	ret = uart_flush_input(sens->uart_num);
 	if (ret != ESP_OK)
 		return ESP_FAIL;
@@ -47,15 +48,18 @@ esp_err_t pms5003_read_data(pms5003_t *sens, pms5003_data_t *data)
 	if (bytec != sizeof buf)
 		return ESP_FAIL;
 
+	/* First four bytes of payload should always be the same */
 	if (*(uint32_t *) buf != 0x1C004D42)
 		return ESP_FAIL;
 
+	/* Confirm data was sent correctly */
 	checksum = 0;
 	for (int i = 0; i < 30; i++)
 		checksum += buf[i];
 	if ((buf[30] << 8) + buf[31] != checksum)
 		return ESP_FAIL;
 
+	/* Change endianness */
 	data->pm1_0 = (buf[4] << 8) + buf[5];
 	data->pm2_5 = (buf[6] << 8) + buf[7];
 	data->pm10 = (buf[8] << 8) + buf[9];

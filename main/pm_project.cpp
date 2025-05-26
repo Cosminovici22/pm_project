@@ -9,9 +9,10 @@
 #include "nvs_flash.h"
 #include "pms5003.h"
 
-#define EXAMPLE_ESP_WIFI_SSID "Cospot"
-#define EXAMPLE_ESP_WIFI_PASS "I'll never tell"
+#define WIFI_SSID "Cospot"
+#define WIFI_PASS "I'll never tell"
 
+/* Various breakpoints for measured components used in the computation of AQI */
 #define PM2_5_BP_0 0.0
 #define PM2_5_BP_1 9.0
 #define PM2_5_BP_2 35.5
@@ -25,6 +26,7 @@
 #define PM10_BP_4 355.0
 #define PM10_BP_5 425.0
 
+/* Formula for the AQI subindex of a component given its concentration */
 #define AQI_SUB(BP_LOW, BP_HIGH, C_PM) (50 / ((BP_HIGH) - (BP_LOW)) * (C_PM \
 	- (BP_LOW)) + (int) (BP_LOW) / 50 * 50)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -32,14 +34,17 @@
 static volatile uint8_t connected = 0;
 static uint8_t retryc = 0;
 
+/* Features buffer used by the predictive model */
 static float features[24];
 static uint8_t featurec = 0;
 
+/* Callback function for predictive model */
 static int get_feature_data(size_t offset, size_t length, float *out_ptr) {
 	memcpy(out_ptr, features + offset, length * sizeof(float));
 	return 0;
 }
 
+/* Handler of various Wi-Fi related events */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 	int32_t event_id, void* event_data)
 {
@@ -66,11 +71,12 @@ static esp_err_t setup_wifi(void)
 	esp_event_handler_instance_t instance_any_id;
 	esp_event_handler_instance_t instance_got_ip;
 	wifi_config_t wifi_config = { .sta = {
-		.ssid = EXAMPLE_ESP_WIFI_SSID,
-		.password = EXAMPLE_ESP_WIFI_PASS,
+		.ssid = WIFI_SSID,
+		.password = WIFI_PASS,
 		.threshold = { .authmode = WIFI_AUTH_WPA2_PSK }
 	}};
 
+	/* Initialize flash memory for peristent storage of Wi-Fi credentials */
 	ret = nvs_flash_init();
 	if (ret == ESP_ERR_NVS_NO_FREE_PAGES
 		|| ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -87,6 +93,7 @@ static esp_err_t setup_wifi(void)
 	if (ret != ESP_OK)
 		return ret;
 
+	/* Event loop for various Wi-Fi related events */
 	ret = esp_event_loop_create_default();
 	if (ret != ESP_OK)
 		return ret;
@@ -120,25 +127,28 @@ static esp_err_t setup_wifi(void)
 	if (ret != ESP_OK)
 		return ret;
 
+	/* Wait for connection to be established or failure */
 	while (connected == 0)
 		;
 
 	if (connected > 0)
-		printf("Successfully connected to %s\n", EXAMPLE_ESP_WIFI_SSID);
+		printf("Successfully connected to %s\n", WIFI_SSID);
 	else
-		printf("Failed to connect to %s\n", EXAMPLE_ESP_WIFI_SSID);
+		printf("Failed to connect to %s\n", WIFI_SSID);
 
 	return ESP_OK;
 }
 
+/* HTTP GET request handler for the HTTP server */
 static esp_err_t http_get_handler(httpd_req_t *req)
 {
 	esp_err_t ret;
 	signal_t signal;
 	ei_impulse_result_t result;
-	char buf[1024];
+	char buf[32];
 	float aqi;
 
+	/* Predict AQI in the next hour using the Edge Impulse trained model */
 	signal.total_length = featurec;
 	signal.get_data = &get_feature_data;
 	if (run_classifier(&signal, &result, false) != EI_IMPULSE_OK)
@@ -160,6 +170,7 @@ static httpd_uri_t uri_get = {
 	.user_ctx = NULL
 };
 
+/* Setup for HTTP server which answers GET requests with AQI predictions */
 static esp_err_t setup_http_server(httpd_handle_t *server)
 {
 	esp_err_t ret;
@@ -198,7 +209,7 @@ static esp_err_t setup_bme280(bme280_handle_t *bme280)
 static esp_err_t setup_pms5003(pms5003_t *pms5003)
 {
 	*pms5003 = (pms5003_t) {
-		.rx = GPIO_NUM_16,
+		.rx = GPIO_NUM_16, /* Only the RX buffer is requried */
 		.uart_num = UART_NUM_2
 	};
 
@@ -208,6 +219,7 @@ static esp_err_t setup_pms5003(pms5003_t *pms5003)
 static esp_err_t hd44780_lcd_init(hd44780_t *hd44780)
 {
 	esp_err_t ret;
+	/* Initialize necessary structures for contrast control using PWM */
 	ledc_timer_config_t ledc_timer = {
 		.speed_mode = LEDC_HIGH_SPEED_MODE,
 		.duty_resolution = LEDC_TIMER_10_BIT,
@@ -221,7 +233,7 @@ static esp_err_t hd44780_lcd_init(hd44780_t *hd44780)
 		.channel = LEDC_CHANNEL_0,
 		.intr_type = LEDC_INTR_DISABLE,
 		.timer_sel = ledc_timer.timer_num,
-		.duty = 650
+		.duty = 650 /* Experimental value for an adequate contrast */
 	};
 
 	*hd44780 = (hd44780_t) {
@@ -255,6 +267,7 @@ static esp_err_t hd44780_lcd_init(hd44780_t *hd44780)
 	return ESP_OK;
 }
 
+/* Compute AQI from the given PM measurements */
 static uint16_t aqi_from(const pms5003_data_t *data)
 {
 	uint16_t pm2_5_index, pm10_index;
@@ -290,14 +303,16 @@ extern "C" void app_main(void)
 	hd44780_t hd44780;
    	httpd_handle_t server;
 
+   	ESP_ERROR_CHECK(hd44780_lcd_init(&hd44780));
+   	ESP_ERROR_CHECK(hd44780_puts(&hd44780, "Initializing.."));
+
+   	ESP_ERROR_CHECK(setup_pms5003(&pms5003));
+   	ESP_ERROR_CHECK(setup_bme280(&bme280));
 	ESP_ERROR_CHECK(setup_wifi());
 	ESP_ERROR_CHECK(setup_http_server(&server));
-	ESP_ERROR_CHECK(setup_pms5003(&pms5003));
-	ESP_ERROR_CHECK(setup_bme280(&bme280));
-	ESP_ERROR_CHECK(hd44780_lcd_init(&hd44780));
 
-	ESP_ERROR_CHECK(hd44780_puts(&hd44780, "Initializing.."));
-	vTaskDelay(pdMS_TO_TICKS(30000));
+	/* Wait 30 seconds for PMS5003 to warm up */
+   	vTaskDelay(pdMS_TO_TICKS(30000));
 
 	for (uint8_t minutes = 0;; minutes++) {
 		// esp_err_t ret;
@@ -311,9 +326,11 @@ extern "C" void app_main(void)
 		bme280_read_pressure(bme280, &pressure);
 		pms5003_read_data(&pms5003, &data);
 
+		/* Every hour, append an AQI to the features buffer */
 		if (minutes == 60) {
 			minutes = 0;
 
+			/* Only keep AQI's of past 24 hours */
 			if (featurec == sizeof features / sizeof *features)
 				memmove(features, features + 1, --featurec);
 
@@ -337,6 +354,7 @@ extern "C" void app_main(void)
 		snprintf(buf, sizeof buf, "    p: %.1f mb", pressure);
 		hd44780_puts(&hd44780, buf);
 
+		/* Measure every 60 seconds (recommended for BME280) */
 		vTaskDelay(pdMS_TO_TICKS(60000));
 	}
 }
