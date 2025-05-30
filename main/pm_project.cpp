@@ -9,7 +9,6 @@
 #include "esp_wifi.h"
 #include "hd44780.h"
 #include "i2c_bus.h"
-#include "nvs_flash.h"
 #include "pms5003.h"
 
 #define WIFI_SSID "Smart air quality sensor"
