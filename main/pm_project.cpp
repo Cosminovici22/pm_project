@@ -1,4 +1,7 @@
+#include <pthread.h>
 #include <stdio.h>
+#include <string.h>
+#include "aqi_html.h"
 #include "bme280.h"
 #include "driver/ledc.h"
 #include "edge-impulse-sdk/classifier/ei_run_classifier.h"
@@ -9,16 +12,16 @@
 #include "nvs_flash.h"
 #include "pms5003.h"
 
-#define WIFI_SSID "Cospot"
-#define WIFI_PASS "I'll never tell"
+#define WIFI_SSID "Smart air quality sensor"
 
-/* Various breakpoints for measured components used in the computation of AQI */
+/* Various breakpoints for particulate matter used in the computation of AQI */
 #define PM2_5_BP_0 0.0
 #define PM2_5_BP_1 9.0
 #define PM2_5_BP_2 35.5
 #define PM2_5_BP_3 55.5
 #define PM2_5_BP_4 125.5
 #define PM2_5_BP_5 225.5
+
 #define PM10_BP_0 0.0
 #define PM10_BP_1 55.0
 #define PM10_BP_2 155.0
@@ -26,100 +29,76 @@
 #define PM10_BP_4 355.0
 #define PM10_BP_5 425.0
 
+#define I_LOW_0 0
+#define I_LOW_1 50
+#define I_LOW_2 100
+#define I_LOW_3 150
+#define I_LOW_4 200
+#define I_LOW_5 300
+
 /* Formula for the AQI subindex of a component given its concentration */
-#define AQI_SUB(BP_LOW, BP_HIGH, C_PM) (50 / ((BP_HIGH) - (BP_LOW)) * (C_PM \
-	- (BP_LOW)) + (int) (BP_LOW) / 50 * 50)
+#define AQI_SUB(c, c_bp_low, c_bp_high, i_low) \
+	(50 * ((c) - (c_bp_low)) / ((c_bp_high) - (c_bp_low)) + (i_low))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define AQI_QUALITY(aqi) \
+	((aqi) < 25 \
+	? "Very low" \
+	: (aqi) < 50 \
+	? "Low" \
+	: (aqi) < 75 \
+	? "Medium" \
+	: (aqi) < 100 \
+	? "High" \
+	: "Very high")
 
-static volatile uint8_t connected = 0;
-static uint8_t retryc = 0;
+/* Hourly AQI buffer */
+static float aqis[24];
+static uint8_t aqic = 0;
+static pthread_mutex_t aqis_lock;
 
-/* Features buffer used by the predictive model */
+/* Features buffer used by the predictive model API */
 static float features[24];
-static uint8_t featurec = 0;
 
-/* Callback function for predictive model */
+/* Callback function for predictive model API */
 static int get_feature_data(size_t offset, size_t length, float *out_ptr) {
 	memcpy(out_ptr, features + offset, length * sizeof(float));
 	return 0;
 }
 
-/* Handler of various Wi-Fi related events */
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-	int32_t event_id, void* event_data)
-{
-	if (event_base == WIFI_EVENT) {
-		if (event_id == WIFI_EVENT_STA_START) {
-			esp_wifi_connect();
-		} else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-			if (retryc++ < 5)
-				esp_wifi_connect();
-			else
-				connected = 1;
-		}
-
-	} else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-		retryc = 0;
-		connected = -1;
-	}
-}
-
 static esp_err_t setup_wifi(void)
 {
 	esp_err_t ret;
-	wifi_init_config_t cfg;
-	esp_event_handler_instance_t instance_any_id;
-	esp_event_handler_instance_t instance_got_ip;
-	wifi_config_t wifi_config = { .sta = {
+	wifi_init_config_t wifi_init_config;
+	wifi_config_t wifi_config = { .ap = {
 		.ssid = WIFI_SSID,
-		.password = WIFI_PASS,
-		.threshold = { .authmode = WIFI_AUTH_WPA2_PSK }
+		.ssid_len = strlen(WIFI_SSID),
+		.channel = 1,
+		.authmode = WIFI_AUTH_OPEN,
+		.max_connection = 10,
+		.pmf_cfg = { .required = true }
 	}};
-
-	/* Initialize flash memory for peristent storage of Wi-Fi credentials */
-	ret = nvs_flash_init();
-	if (ret == ESP_ERR_NVS_NO_FREE_PAGES
-		|| ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-		ret = nvs_flash_erase();
-		if (ret != ESP_OK)
-			return ret;
-
-		ret = nvs_flash_init();
-		if (ret != ESP_OK)
-			return ret;
-	}
 
 	ret = esp_netif_init();
 	if (ret != ESP_OK)
 		return ret;
 
-	/* Event loop for various Wi-Fi related events */
 	ret = esp_event_loop_create_default();
 	if (ret != ESP_OK)
 		return ret;
 
-	esp_netif_create_default_wifi_sta();
+	esp_netif_create_default_wifi_ap();
 
-	cfg = WIFI_INIT_CONFIG_DEFAULT();
-	ret = esp_wifi_init(&cfg);
+	wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
+	wifi_init_config.nvs_enable = 0;
+	ret = esp_wifi_init(&wifi_init_config);
 	if (ret != ESP_OK)
 		return ret;
 
-	ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-		&wifi_event_handler, NULL, &instance_any_id);
+	ret = esp_wifi_set_mode(WIFI_MODE_AP);
 	if (ret != ESP_OK)
 		return ret;
 
-	ret = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-		&wifi_event_handler, NULL, &instance_got_ip);
-	if (ret != ESP_OK)
-		return ret;
-
-	ret = esp_wifi_set_mode(WIFI_MODE_STA);
-	if (ret != ESP_OK)
-		return ret;
-
-	ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+	ret = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
 	if (ret != ESP_OK)
 		return ret;
 
@@ -127,35 +106,38 @@ static esp_err_t setup_wifi(void)
 	if (ret != ESP_OK)
 		return ret;
 
-	/* Wait for connection to be established or failure */
-	while (connected == 0)
-		;
-
-	if (connected > 0)
-		printf("Successfully connected to %s\n", WIFI_SSID);
-	else
-		printf("Failed to connect to %s\n", WIFI_SSID);
-
 	return ESP_OK;
 }
 
 /* HTTP GET request handler for the HTTP server */
 static esp_err_t http_get_handler(httpd_req_t *req)
 {
+	static char buf[1350];
 	esp_err_t ret;
-	signal_t signal;
-	ei_impulse_result_t result;
-	char buf[32];
-	float aqi;
+	uint8_t featurec;
 
-	/* Predict AQI in the next hour using the Edge Impulse trained model */
-	signal.total_length = featurec;
-	signal.get_data = &get_feature_data;
-	if (run_classifier(&signal, &result, false) != EI_IMPULSE_OK)
-		return ESP_FAIL;
-	aqi = result.classification[0].value;
+	pthread_mutex_lock(&aqis_lock);
+	memcpy(features, aqis, aqic * sizeof *aqis);
+	featurec = aqic;
+	pthread_mutex_unlock(&aqis_lock);
 
-	snprintf(buf, sizeof buf, "AQI in the next hour: %.0f\n", aqi);
+	/* Predict AQI of the next 24 hours */
+	for (uint8_t i = 0; i < 24; i++) {
+		signal_t signal;
+		ei_impulse_result_t result;
+
+		signal.total_length = featurec;
+		signal.get_data = &get_feature_data;
+		if (run_classifier(&signal, &result, false) != EI_IMPULSE_OK)
+			return ESP_FAIL;
+
+		if (featurec == sizeof features / sizeof *features)
+			memmove(features, features + 1, --featurec);
+
+		features[featurec++] = result.classification[0].value;
+	}
+
+	snprintf(buf, sizeof buf, AQI_HTML, UNPACK_24(features));
 	ret = httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
 	if (ret != ESP_OK)
 		return ret;
@@ -163,22 +145,21 @@ static esp_err_t http_get_handler(httpd_req_t *req)
 	return ESP_OK;
 }
 
-static httpd_uri_t uri_get = {
-	.uri = "/",
-	.method = HTTP_GET,
-	.handler = http_get_handler,
-	.user_ctx = NULL
-};
-
 /* Setup for HTTP server which answers GET requests with AQI predictions */
 static esp_err_t setup_http_server(httpd_handle_t *server)
 {
 	esp_err_t ret;
-	httpd_config_t config;
+	httpd_config_t httpd_config;
+	httpd_uri_t uri_get = {
+		.uri = "/",
+		.method = HTTP_GET,
+		.handler = http_get_handler,
+		.user_ctx = NULL
+	};
 
-	config = HTTPD_DEFAULT_CONFIG();
+	httpd_config = HTTPD_DEFAULT_CONFIG();
 
-	ret = httpd_start(server, &config);
+	ret = httpd_start(server, &httpd_config);
 	if (ret != ESP_OK)
 		return ret;
 
@@ -274,24 +255,24 @@ static uint16_t aqi_from(const pms5003_data_t *data)
 
 	pm2_5_index
 		= data->pm2_5 < PM2_5_BP_1
-		? AQI_SUB(PM2_5_BP_0, PM2_5_BP_1, data->pm2_5)
-		: data->pm2_5 >= PM2_5_BP_1 && data->pm2_5 < PM2_5_BP_2
-		? AQI_SUB(PM2_5_BP_1, PM2_5_BP_2, data->pm2_5)
-		: data->pm2_5 >= PM2_5_BP_2 && data->pm2_5 < PM2_5_BP_3
-		? AQI_SUB(PM2_5_BP_2, PM2_5_BP_3, data->pm2_5)
-		: data->pm2_5 >= PM2_5_BP_3 && data->pm2_5 < PM2_5_BP_4
-		? AQI_SUB(PM2_5_BP_3, PM2_5_BP_4, data->pm2_5)
-		: AQI_SUB(PM2_5_BP_4, PM2_5_BP_5, data->pm2_5);
+		? AQI_SUB(data->pm2_5, PM2_5_BP_0, PM2_5_BP_1, I_LOW_0)
+		: data->pm2_5 < PM2_5_BP_2
+		? AQI_SUB(data->pm2_5, PM2_5_BP_1, PM2_5_BP_2, I_LOW_1)
+		: data->pm2_5 < PM2_5_BP_3
+		? AQI_SUB(data->pm2_5, PM2_5_BP_2, PM2_5_BP_3, I_LOW_2)
+		: data->pm2_5 < PM2_5_BP_4
+		? AQI_SUB(data->pm2_5, PM2_5_BP_3, PM2_5_BP_4, I_LOW_3)
+		: AQI_SUB(data->pm2_5, PM2_5_BP_4, PM2_5_BP_5, I_LOW_4);
 	pm10_index
 		= data->pm10 < PM10_BP_1
-		? AQI_SUB(PM10_BP_0, PM10_BP_1, data->pm10)
-		: data->pm10 >= PM10_BP_1 && data->pm10 < PM10_BP_2
-		? AQI_SUB(PM10_BP_1, PM10_BP_2, data->pm10)
-		: data->pm10 >= PM10_BP_2 && data->pm10 < PM10_BP_3
-		? AQI_SUB(PM10_BP_2, PM10_BP_3, data->pm10)
-		: data->pm10 >= PM10_BP_3 && data->pm10 < PM10_BP_4
-		? AQI_SUB(PM10_BP_3, PM10_BP_4, data->pm10)
-		: AQI_SUB(PM10_BP_4, PM10_BP_5, data->pm10);
+		? AQI_SUB(data->pm10, PM10_BP_0, PM10_BP_1, I_LOW_0)
+		: data->pm10 < PM10_BP_2
+		? AQI_SUB(data->pm10, PM10_BP_1, PM10_BP_2, I_LOW_1)
+		: data->pm10 < PM10_BP_3
+		? AQI_SUB(data->pm10, PM10_BP_2, PM10_BP_3, I_LOW_2)
+		: data->pm10 < PM10_BP_4
+		? AQI_SUB(data->pm10, PM10_BP_3, PM10_BP_4, I_LOW_3)
+		: AQI_SUB(data->pm10, PM10_BP_4, PM10_BP_5, I_LOW_4);
 
 	return MAX(pm2_5_index, pm10_index);
 }
@@ -301,57 +282,63 @@ extern "C" void app_main(void)
 	bme280_handle_t bme280;
 	pms5003_t pms5003;
 	hd44780_t hd44780;
-   	httpd_handle_t server;
+	httpd_handle_t server;
 
-   	ESP_ERROR_CHECK(hd44780_lcd_init(&hd44780));
-   	ESP_ERROR_CHECK(hd44780_puts(&hd44780, "Initializing.."));
+	ESP_ERROR_CHECK(hd44780_lcd_init(&hd44780));
+	ESP_ERROR_CHECK(hd44780_puts(&hd44780, "Initializing.."));
 
-   	ESP_ERROR_CHECK(setup_pms5003(&pms5003));
-   	ESP_ERROR_CHECK(setup_bme280(&bme280));
+	pthread_mutex_init(&aqis_lock, NULL);
+
+	ESP_ERROR_CHECK(setup_pms5003(&pms5003));
+	ESP_ERROR_CHECK(setup_bme280(&bme280));
 	ESP_ERROR_CHECK(setup_wifi());
 	ESP_ERROR_CHECK(setup_http_server(&server));
 
 	/* Wait 30 seconds for PMS5003 to warm up */
-   	vTaskDelay(pdMS_TO_TICKS(30000));
+	vTaskDelay(pdMS_TO_TICKS(30000));
 
 	for (uint8_t minutes = 0;; minutes++) {
-		// esp_err_t ret;
 		char buf[21];
 		pms5003_data_t data = {0};
 		float temperature, humidity, pressure;
+		uint16_t aqi;
 
 		temperature = humidity = pressure = 0;
 		bme280_read_temperature(bme280, &temperature);
 		bme280_read_humidity(bme280, &humidity);
 		bme280_read_pressure(bme280, &pressure);
 		pms5003_read_data(&pms5003, &data);
+		aqi = aqi_from(&data);
 
-		/* Every hour, append an AQI to the features buffer */
+		/* Every hour, append an AQI to the aqis buffer */
 		if (minutes == 60) {
 			minutes = 0;
 
 			/* Only keep AQI's of past 24 hours */
-			if (featurec == sizeof features / sizeof *features)
-				memmove(features, features + 1, --featurec);
+			pthread_mutex_lock(&aqis_lock);
 
-			features[featurec++] = aqi_from(&data);
+			if (aqic == sizeof aqis / sizeof *aqis)
+				memmove(aqis, aqis + 1, --aqic);
+
+			aqis[aqic++] = aqi;
+
+			pthread_mutex_unlock(&aqis_lock);
 		}
 
 		hd44780_clear(&hd44780);
-		snprintf(buf, sizeof buf, "PM2.5: %u ""\xE4""g/m3", data.pm2_5);
+		snprintf(buf, sizeof buf, "AQI: %u %s", aqi, AQI_QUALITY(aqi));
 		hd44780_puts(&hd44780, buf);
 
 		hd44780_gotoxy(&hd44780, 0, 1);
-		snprintf(buf, sizeof buf, " PM10: %u ""\xE4""g/m3", data.pm10);
+		snprintf(buf, sizeof buf, "  T: %.0f""\xDF""C", temperature);
 		hd44780_puts(&hd44780, buf);
 
 		hd44780_gotoxy(&hd44780, 0, 2);
-		snprintf(buf, sizeof buf, "    T: %.0f""\xDF""C RH: %.0f%%",
-			temperature, humidity);
+		snprintf(buf, sizeof buf, " RH: %.0f%%", humidity);
 		hd44780_puts(&hd44780, buf);
 
 		hd44780_gotoxy(&hd44780, 0, 3);
-		snprintf(buf, sizeof buf, "    p: %.1f mb", pressure);
+		snprintf(buf, sizeof buf, "  p: %.1f mb", pressure);
 		hd44780_puts(&hd44780, buf);
 
 		/* Measure every 60 seconds (recommended for BME280) */

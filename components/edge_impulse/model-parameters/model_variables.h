@@ -42,16 +42,16 @@
 #include <stdint.h>
 #include "model_metadata.h"
 
-#include "tflite-model/tflite_learn_15_compiled.h"
+#include "tflite-model/tflite_learn_18_compiled.h"
 #include "edge-impulse-sdk/classifier/ei_model_types.h"
 #include "edge-impulse-sdk/classifier/inferencing_engines/engines.h"
 
 const char* ei_classifier_inferencing_categories[] = { "value" };
 
-EI_CLASSIFIER_DSP_AXES_INDEX_TYPE ei_dsp_config_14_axes[] = { 0 };
-const uint32_t ei_dsp_config_14_axes_size = 1;
-ei_dsp_config_raw_t ei_dsp_config_14 = {
-    14, // uint32_t blockId
+EI_CLASSIFIER_DSP_AXES_INDEX_TYPE ei_dsp_config_17_axes[] = { 0 };
+const uint32_t ei_dsp_config_17_axes_size = 1;
+ei_dsp_config_raw_t ei_dsp_config_17 = {
+    17, // uint32_t blockId
     1, // int implementationVersion
     1, // int length of axes
     1.0f // float scale-axes
@@ -59,30 +59,30 @@ ei_dsp_config_raw_t ei_dsp_config_14 = {
 
 const uint8_t ei_dsp_blocks_size = 1;
 ei_model_dsp_t ei_dsp_blocks[ei_dsp_blocks_size] = {
-    { // DSP block 14
-        14,
+    { // DSP block 17
+        17,
         24, // output size
         &extract_raw_features, // DSP function pointer
-        (void*)&ei_dsp_config_14, // pointer to config struct
-        ei_dsp_config_14_axes, // array of offsets into the input stream, one for each axis
-        ei_dsp_config_14_axes_size, // number of axes
+        (void*)&ei_dsp_config_17, // pointer to config struct
+        ei_dsp_config_17_axes, // array of offsets into the input stream, one for each axis
+        ei_dsp_config_17_axes_size, // number of axes
         1, // version
         nullptr, // factory function
     }
 };
-const ei_config_tflite_eon_graph_t ei_config_tflite_graph_15 = {
+const ei_config_tflite_eon_graph_t ei_config_tflite_graph_18 = {
     .implementation_version = 1,
-    .model_init = &tflite_learn_15_init,
-    .model_invoke = &tflite_learn_15_invoke,
-    .model_reset = &tflite_learn_15_reset,
-    .model_input = &tflite_learn_15_input,
-    .model_output = &tflite_learn_15_output,
+    .model_init = &tflite_learn_18_init,
+    .model_invoke = &tflite_learn_18_invoke,
+    .model_reset = &tflite_learn_18_reset,
+    .model_input = &tflite_learn_18_input,
+    .model_output = &tflite_learn_18_output,
 };
 
-ei_learning_block_config_tflite_graph_t ei_learning_block_config_15 = {
+ei_learning_block_config_tflite_graph_t ei_learning_block_config_18 = {
     .implementation_version = 1,
     .classification_mode = EI_CLASSIFIER_CLASSIFICATION_MODE_REGRESSION,
-    .block_id = 15,
+    .block_id = 18,
     .object_detection = 0,
     .object_detection_last_layer = EI_CLASSIFIER_LAST_LAYER_UNKNOWN,
     .output_data_tensor = 0,
@@ -91,21 +91,21 @@ ei_learning_block_config_tflite_graph_t ei_learning_block_config_15 = {
     .threshold = 0,
     .quantized = 1,
     .compiled = 1,
-    .graph_config = (void*)&ei_config_tflite_graph_15
+    .graph_config = (void*)&ei_config_tflite_graph_18
 };
 
 const uint8_t ei_learning_blocks_size = 1;
-const uint32_t ei_learning_block_15_inputs[1] = { 14 };
-const uint8_t ei_learning_block_15_inputs_size = 1;
+const uint32_t ei_learning_block_18_inputs[1] = { 17 };
+const uint8_t ei_learning_block_18_inputs_size = 1;
 const ei_learning_block_t ei_learning_blocks[ei_learning_blocks_size] = {
     {
-        15,
+        18,
         false,
         &run_nn_inference,
-        (void*)&ei_learning_block_config_15,
+        (void*)&ei_learning_block_config_18,
         EI_CLASSIFIER_IMAGE_SCALING_NONE,
-        ei_learning_block_15_inputs,
-        ei_learning_block_15_inputs_size,
+        ei_learning_block_18_inputs,
+        ei_learning_block_18_inputs_size,
         1
     },
 };
@@ -122,9 +122,9 @@ const ei_impulse_t impulse_704867_0 = {
     .project_id = 704867,
     .project_owner = "cosminovici",
     .project_name = "pm",
-    .impulse_id = 5,
-    .impulse_name = "Impulse #5",
-    .deploy_version = 2,
+    .impulse_id = 6,
+    .impulse_name = "Impulse #6",
+    .deploy_version = 3,
 
     .nn_input_frame_size = 24,
     .raw_sample_count = 24,
